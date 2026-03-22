@@ -126,15 +126,19 @@ def get_nasdaq_tickers():
 
 
 def get_realtime_data(ticker, period='5d', interval='15m'):
-    """Fetch recent price data for any ticker using yfinance.
-    Uses Ticker.history() which works directly without subprocess."""
+    """Fetch recent price data for any ticker using yfinance."""
     try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(period=period)
+        df = yf.download(ticker, period=period, progress=False, threads=False)
+
+        # flatten multi-level columns if present
+        if hasattr(df.columns, 'droplevel'):
+            try:
+                df.columns = df.columns.droplevel('Ticker')
+            except:
+                pass
 
         if df is None or df.empty:
-            # return error info instead of None so we can debug
-            return {"error_debug": f"yfinance returned empty for {ticker} period={period}", "ticker": ticker}
+            return {"error_debug": f"yfinance download empty for {ticker} period={period}"}
 
         # build response
         prices = []
@@ -188,10 +192,14 @@ def get_ticker_info(ticker):
     }
 
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period='5d')
-        if not hist.empty:
-            result['current_price'] = round(float(hist['Close'].values[-1]), 2)
+        df = yf.download(ticker, period='5d', progress=False, threads=False)
+        if hasattr(df.columns, 'droplevel'):
+            try:
+                df.columns = df.columns.droplevel('Ticker')
+            except:
+                pass
+        if not df.empty:
+            result['current_price'] = round(float(df['Close'].values[-1]), 2)
     except:
         pass
 
