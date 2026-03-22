@@ -17,7 +17,7 @@ from predict import (
     get_prediction, get_history, get_metrics,
     get_long_term_forecast, get_trained_tickers, is_ticker_trained
 )
-from realtime import get_nasdaq_tickers, get_realtime_data, get_ticker_info
+from realtime import get_nasdaq_tickers, get_realtime_data, get_ticker_info, COMPANY_NAMES
 from train_on_demand import train_ticker, is_trained
 
 app = FastAPI(
@@ -48,14 +48,15 @@ def root():
 
 @app.get("/tickers")
 def list_tickers():
-    """Return all supported tickers (full NASDAQ list)."""
+    """Return all supported tickers with company names."""
     all_tickers = get_nasdaq_tickers()
     trained = get_trained_tickers()
     return {
         "total": len(all_tickers),
         "trained_count": len(trained),
         "trained": trained,
-        "all_tickers": all_tickers
+        "all_tickers": all_tickers,
+        "names": COMPANY_NAMES
     }
 
 

@@ -13,6 +13,7 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 function App() {
   const [allTickers, setAllTickers] = useState([]);
+  const [tickerNames, setTickerNames] = useState({});
   const [trainedTickers, setTrainedTickers] = useState([]);
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [history, setHistory] = useState([]);
@@ -33,6 +34,7 @@ function App() {
       .then(res => {
         setAllTickers(res.data.all_tickers || []);
         setTrainedTickers(res.data.trained || []);
+        setTickerNames(res.data.names || {});
       })
       .catch(err => {
         console.error('Failed to load tickers:', err);
@@ -201,6 +203,7 @@ function App() {
           <TickerSelector
             tickers={allTickers}
             trainedTickers={trainedTickers}
+            names={tickerNames}
             selected={selectedTicker}
             onChange={handleTickerChange}
           />

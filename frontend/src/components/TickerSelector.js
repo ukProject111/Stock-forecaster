@@ -2,27 +2,43 @@ import React, { useState, useEffect, useRef } from 'react';
 
 /*
   Searchable ticker input with dropdown suggestions.
-  Shows all NASDAQ tickers with a badge for trained ones.
-  User can type to filter or pick from the list.
+  Shows ticker symbols + company names with a badge for trained ones.
+  Supports both US and UK (.L) stocks.
 */
-function TickerSelector({ tickers, trainedTickers, selected, onChange }) {
+function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) {
   const [query, setQuery] = useState(selected || '');
   const [showDropdown, setShowDropdown] = useState(false);
   const [filtered, setFiltered] = useState([]);
   const inputRef = useRef(null);
   const dropdownRef = useRef(null);
 
-  // filter tickers as user types
+  const nameMap = names || {};
+
+  // filter tickers as user types — search both symbol and company name
   useEffect(() => {
-    if (!query || !tickers || tickers.length === 0) {
-      setFiltered(tickers ? tickers.slice(0, 50) : []);
+    if (!tickers || tickers.length === 0) {
+      setFiltered([]);
+      return;
+    }
+    if (!query) {
+      setFiltered(tickers.slice(0, 50));
       return;
     }
     const q = query.toUpperCase();
-    const matches = tickers.filter(t => t.startsWith(q));
-    const fuzzy = tickers.filter(t => t.includes(q) && !t.startsWith(q));
-    setFiltered([...matches, ...fuzzy].slice(0, 50));
-  }, [query, tickers]);
+    const qLower = query.toLowerCase();
+
+    // match by symbol first
+    const symbolStart = tickers.filter(t => t.startsWith(q));
+    const symbolContains = tickers.filter(t => t.includes(q) && !t.startsWith(q));
+
+    // then match by company name
+    const nameMatches = tickers.filter(t => {
+      const name = (nameMap[t] || '').toLowerCase();
+      return name.includes(qLower) && !t.startsWith(q) && !t.includes(q);
+    });
+
+    setFiltered([...symbolStart, ...symbolContains, ...nameMatches].slice(0, 50));
+  }, [query, tickers, nameMap]);
 
   // close dropdown when clicking outside
   useEffect(() => {
@@ -75,7 +91,7 @@ function TickerSelector({ tickers, trainedTickers, selected, onChange }) {
         onChange={handleInputChange}
         onFocus={() => setShowDropdown(true)}
         onKeyDown={handleKeyDown}
-        placeholder="Search ticker..."
+        placeholder="Search ticker or company..."
         autoComplete="off"
         style={{
           padding: '10px 16px',
@@ -86,7 +102,7 @@ function TickerSelector({ tickers, trainedTickers, selected, onChange }) {
           background: '#111827',
           border: '1px solid rgba(0, 240, 255, 0.3)',
           borderRadius: '4px',
-          width: '180px',
+          width: '240px',
           outline: 'none',
           letterSpacing: '1px',
         }}
@@ -99,49 +115,94 @@ function TickerSelector({ tickers, trainedTickers, selected, onChange }) {
             position: 'absolute',
             top: '100%',
             left: 0,
-            right: 0,
             marginTop: '4px',
             background: '#111827',
             border: '1px solid rgba(0, 240, 255, 0.2)',
             borderRadius: '4px',
-            maxHeight: '300px',
+            maxHeight: '350px',
             overflowY: 'auto',
             zIndex: 999,
-            minWidth: '220px',
+            minWidth: '340px',
           }}
         >
-          {filtered.map(ticker => (
-            <div
-              key={ticker}
-              onClick={() => handleSelect(ticker)}
-              style={{
-                padding: '8px 14px',
-                cursor: 'pointer',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                fontFamily: "'Share Tech Mono', monospace",
-                fontSize: '0.8rem',
-                color: trainedSet.has(ticker) ? '#00ff88' : '#94a3b8',
-                borderBottom: '1px solid rgba(255,255,255,0.03)',
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={(e) => e.target.style.background = 'rgba(0,240,255,0.08)'}
-              onMouseLeave={(e) => e.target.style.background = 'transparent'}
-            >
-              <span>{ticker}</span>
-              {trainedSet.has(ticker) && (
+          {filtered.map(ticker => {
+            const companyName = nameMap[ticker] || '';
+            const isUK = ticker.endsWith('.L');
+            const isTrained = trainedSet.has(ticker);
+
+            return (
+              <div
+                key={ticker}
+                onClick={() => handleSelect(ticker)}
+                style={{
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontFamily: "'Share Tech Mono', monospace",
+                  fontSize: '0.75rem',
+                  color: isTrained ? '#00ff88' : '#94a3b8',
+                  borderBottom: '1px solid rgba(255,255,255,0.03)',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0,240,255,0.08)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                {/* Ticker symbol */}
                 <span style={{
-                  fontSize: '0.6rem',
-                  background: 'rgba(0,255,136,0.15)',
-                  color: '#00ff88',
-                  padding: '2px 6px',
-                  borderRadius: '2px',
-                  letterSpacing: '1px',
-                }}>ML READY</span>
-              )}
-            </div>
-          ))}
+                  fontWeight: 700,
+                  minWidth: '65px',
+                  color: isTrained ? '#00ff88' : '#00f0ff',
+                  fontSize: '0.8rem',
+                }}>{ticker}</span>
+
+                {/* Company name */}
+                <span style={{
+                  flex: 1,
+                  color: '#94a3b8',
+                  fontSize: '0.7rem',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>{companyName}</span>
+
+                {/* Badges */}
+                <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                  {isUK && (
+                    <span style={{
+                      fontSize: '0.55rem',
+                      background: 'rgba(55,138,221,0.15)',
+                      color: '#378ADD',
+                      padding: '2px 5px',
+                      borderRadius: '2px',
+                      letterSpacing: '1px',
+                    }}>UK</span>
+                  )}
+                  {!isUK && (
+                    <span style={{
+                      fontSize: '0.55rem',
+                      background: 'rgba(0,240,255,0.08)',
+                      color: '#64748b',
+                      padding: '2px 5px',
+                      borderRadius: '2px',
+                      letterSpacing: '1px',
+                    }}>US</span>
+                  )}
+                  {isTrained && (
+                    <span style={{
+                      fontSize: '0.55rem',
+                      background: 'rgba(0,255,136,0.15)',
+                      color: '#00ff88',
+                      padding: '2px 5px',
+                      borderRadius: '2px',
+                      letterSpacing: '1px',
+                    }}>ML</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
