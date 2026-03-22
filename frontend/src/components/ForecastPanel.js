@@ -38,6 +38,7 @@ function ForecastPanel({ ticker, forecast, loading, progress, onForecast, startP
   const [histData, setHistData] = useState(null);
   const [chartData, setChartData] = useState(null);
   const [metrics, setMetrics] = useState(null);
+  const [yearlyTargets, setYearlyTargets] = useState([]);
 
   // fetch 10 years of historical monthly data via backend proxy
   const fetchHistory = useCallback(async () => {
@@ -150,6 +151,23 @@ function ForecastPanel({ ticker, forecast, loading, progress, onForecast, startP
       low95: finalLow95,
       high95: finalHigh95,
     });
+
+    // build yearly targets from the chart's forecast data (every 4th quarter = 1 year)
+    const targets = [];
+    for (let yr = 1; yr <= years; yr++) {
+      const qIdx = yr * 4 - 1; // end of each year
+      if (qIdx < forecastPoints.length) {
+        const pt = forecastPoints[qIdx];
+        targets.push({
+          year: lastHist.date.getFullYear() + yr,
+          predicted_price: pt.median,
+          low95: pt.lower95,
+          high95: pt.upper95,
+          date: pt.date.toISOString().slice(0, 10),
+        });
+      }
+    }
+    setYearlyTargets(targets);
 
     setChartData({
       labels,
@@ -318,7 +336,7 @@ function ForecastPanel({ ticker, forecast, loading, progress, onForecast, startP
       </div>
 
       {/* Yearly summary table */}
-      {forecast && forecast.yearly_summary && (
+      {yearlyTargets.length > 0 && metrics && (
         <div style={{ marginTop: '24px' }}>
           <div className="section-title">Yearly Price Targets</div>
           <table className="yearly-table">
@@ -326,23 +344,23 @@ function ForecastPanel({ ticker, forecast, loading, progress, onForecast, startP
               <tr>
                 <th>Year</th>
                 <th>Predicted Price</th>
-                <th>Change from Start</th>
-                <th>Date</th>
+                <th>Change from Current</th>
+                <th>95% Range</th>
               </tr>
             </thead>
             <tbody>
-              {forecast.yearly_summary.map((yr, idx) => {
-                const change = yr.predicted_price - forecast.start_price;
-                const changePct = ((change / forecast.start_price) * 100).toFixed(1);
+              {yearlyTargets.map((yr, idx) => {
+                const change = yr.predicted_price - metrics.currentPrice;
+                const changePct = ((change / metrics.currentPrice) * 100).toFixed(1);
                 const isUp = change >= 0;
                 return (
                   <tr key={idx}>
                     <td>{yr.year}</td>
                     <td style={{ fontWeight: 600 }}>${yr.predicted_price.toFixed(2)}</td>
                     <td className={isUp ? 'price-change-up' : 'price-change-down'}>
-                      {isUp ? '+' : ''}{changePct}% ({isUp ? '+' : ''}${change.toFixed(2)})
+                      {isUp ? '+' : ''}{changePct}%
                     </td>
-                    <td>{yr.date}</td>
+                    <td>${yr.low95.toFixed(2)} &ndash; ${yr.high95.toFixed(2)}</td>
                   </tr>
                 );
               })}
