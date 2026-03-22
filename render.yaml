@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: stock-forecaster-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.6
+      - key: SUPABASE_URL
+        value: https://onvbqyxrgpqnipiavvxv.supabase.co
+      - key: SUPABASE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9udmJxeXhyZ3BxbmlwaWF2dnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxNTYxNjksImV4cCI6MjA4OTczMjE2OX0.pYei_3LMHAqhKa3_6vGJVLk81f8LpQQ1f5pEI75pf3k
