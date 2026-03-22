@@ -127,50 +127,18 @@ def get_nasdaq_tickers():
 
 def get_realtime_data(ticker, period='5d', interval='15m'):
     """Fetch recent price data for any ticker using yfinance.
-    Uses yf.download() which is more reliable than Ticker.history().
-
-    For intraday intervals, we map period to start/end dates.
-    """
+    Uses Ticker.history() which works directly without subprocess."""
     try:
-        import subprocess, io
+        stock = yf.Ticker(ticker)
+        df = stock.history(period=period)
 
-        # yf.download fails inside uvicorn due to threading issues
-        # so we run it in a subprocess as a workaround
-        script = f"""
-import yfinance as yf, sys
-df = yf.download('{ticker}', period='{period}', progress=False)
-if hasattr(df.columns, 'droplevel'):
-    try: df.columns = df.columns.droplevel('Ticker')
-    except: pass
-df.to_csv(sys.stdout)
-"""
-        result = subprocess.run(
-            ['python3', '-c', script],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return None
-
-        df = pd.read_csv(io.StringIO(result.stdout), index_col='Date', parse_dates=True)
-
-        # flatten multi-level columns if present
-        if hasattr(df.columns, 'droplevel'):
-            try:
-                df.columns = df.columns.droplevel('Ticker')
-            except:
-                pass
-
-        if df.empty:
+        if df is None or df.empty:
             return None
 
         # build response
         prices = []
         for idx, row in df.iterrows():
-            try:
-                dt_str = str(idx)[:10]
-            except:
-                dt_str = str(idx)[:16]
-
+            dt_str = str(idx)[:10]
             prices.append({
                 'datetime': dt_str,
                 'open': round(float(row['Open']), 2),
@@ -180,8 +148,10 @@ df.to_csv(sys.stdout)
                 'volume': int(row['Volume'])
             })
 
-        # current price is the last close
-        current_price = prices[-1]['close'] if prices else 0
+        if not prices:
+            return None
+
+        current_price = prices[-1]['close']
         info = {
             'current_price': current_price,
             'market_cap': 0,
@@ -197,12 +167,12 @@ df.to_csv(sys.stdout)
             'info': info
         }
     except Exception as e:
+        print(f"Realtime data error for {ticker}: {e}")
         return None
 
 
 def get_ticker_info(ticker):
-    """Get basic info about a stock ticker.
-    Uses yf.download for the latest price since Ticker.info can fail."""
+    """Get basic info about a stock ticker."""
     if ticker in _ticker_info_cache:
         return _ticker_info_cache[ticker]
 
@@ -216,19 +186,11 @@ def get_ticker_info(ticker):
         'exchange': 'N/A',
     }
 
-    # try to get latest price via download
     try:
-        from datetime import datetime, timedelta
-        end = datetime.now()
-        start = end - timedelta(days=5)
-        df = yf.download(ticker, start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
-        if not df.empty:
-            if hasattr(df.columns, 'droplevel'):
-                try:
-                    df.columns = df.columns.droplevel('Ticker')
-                except:
-                    pass
-            result['current_price'] = round(float(df['Close'].values[-1]), 2)
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period='5d')
+        if not hist.empty:
+            result['current_price'] = round(float(hist['Close'].values[-1]), 2)
     except:
         pass
 
