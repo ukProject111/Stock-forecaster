@@ -1,44 +1,74 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 /*
-  Searchable ticker input with dropdown suggestions.
-  Shows ticker symbols + company names with a badge for trained ones.
-  Supports both US and UK (.L) stocks.
+  Searchable ticker input with live Yahoo Finance search.
+  Supports ALL US (~12,000+) and UK (~2,000) stocks with company names.
+  Shows local matches first, then fetches from Yahoo for broader results.
 */
 function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) {
   const [query, setQuery] = useState(selected || '');
   const [showDropdown, setShowDropdown] = useState(false);
-  const [filtered, setFiltered] = useState([]);
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
   const inputRef = useRef(null);
   const dropdownRef = useRef(null);
+  const debounceRef = useRef(null);
 
   const nameMap = names || {};
+  const trainedSet = new Set(trainedTickers || []);
 
-  // filter tickers as user types — search both symbol and company name
+  // build initial results from local list when no query
+  const getLocalDefaults = useCallback(() => {
+    if (!tickers || tickers.length === 0) return [];
+    return tickers.slice(0, 50).map(t => ({
+      ticker: t,
+      name: nameMap[t] || '',
+      exchange: t.endsWith('.L') ? 'LSE' : 'US',
+      trained: trainedSet.has(t),
+      source: 'local'
+    }));
+  }, [tickers, nameMap, trainedSet]);
+
+  // search via backend API (local + Yahoo Finance)
+  const searchTickers = useCallback(async (q) => {
+    if (!q || q.length < 1) {
+      setResults(getLocalDefaults());
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    try {
+      const res = await fetch(`${API_URL}/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setResults(data.results || []);
+    } catch (e) {
+      // fallback to local filter
+      const qUp = q.toUpperCase();
+      const qLow = q.toLowerCase();
+      const filtered = (tickers || []).filter(t =>
+        t.includes(qUp) || (nameMap[t] || '').toLowerCase().includes(qLow)
+      ).slice(0, 30).map(t => ({
+        ticker: t,
+        name: nameMap[t] || '',
+        exchange: t.endsWith('.L') ? 'LSE' : 'US',
+        trained: trainedSet.has(t),
+        source: 'local'
+      }));
+      setResults(filtered);
+    } finally {
+      setSearching(false);
+    }
+  }, [tickers, nameMap, trainedSet, getLocalDefaults]);
+
+  // debounced search on query change
   useEffect(() => {
-    if (!tickers || tickers.length === 0) {
-      setFiltered([]);
-      return;
-    }
-    if (!query) {
-      setFiltered(tickers.slice(0, 50));
-      return;
-    }
-    const q = query.toUpperCase();
-    const qLower = query.toLowerCase();
-
-    // match by symbol first
-    const symbolStart = tickers.filter(t => t.startsWith(q));
-    const symbolContains = tickers.filter(t => t.includes(q) && !t.startsWith(q));
-
-    // then match by company name
-    const nameMatches = tickers.filter(t => {
-      const name = (nameMap[t] || '').toLowerCase();
-      return name.includes(qLower) && !t.startsWith(q) && !t.includes(q);
-    });
-
-    setFiltered([...symbolStart, ...symbolContains, ...nameMatches].slice(0, 50));
-  }, [query, tickers, nameMap]);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => searchTickers(query), 250);
+    return () => clearTimeout(debounceRef.current);
+  }, [query, searchTickers]);
 
   // close dropdown when clicking outside
   useEffect(() => {
@@ -66,8 +96,7 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
   };
 
   const handleInputChange = (e) => {
-    const val = e.target.value.toUpperCase();
-    setQuery(val);
+    setQuery(e.target.value);
     setShowDropdown(true);
   };
 
@@ -78,8 +107,6 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
     }
   };
 
-  const trainedSet = new Set(trainedTickers || []);
-
   return (
     <div className="ticker-selector" style={{ position: 'relative' }}>
       <label htmlFor="ticker-input">Target Asset</label>
@@ -89,26 +116,26 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
         type="text"
         value={query}
         onChange={handleInputChange}
-        onFocus={() => setShowDropdown(true)}
+        onFocus={() => { setShowDropdown(true); if (!query) searchTickers(''); }}
         onKeyDown={handleKeyDown}
         placeholder="Search ticker or company..."
         autoComplete="off"
         style={{
           padding: '10px 16px',
           fontFamily: "'Orbitron', sans-serif",
-          fontSize: '0.9rem',
+          fontSize: '0.85rem',
           fontWeight: 600,
           color: '#00f0ff',
           background: '#111827',
           border: '1px solid rgba(0, 240, 255, 0.3)',
           borderRadius: '4px',
-          width: '240px',
+          width: '260px',
           outline: 'none',
           letterSpacing: '1px',
         }}
       />
 
-      {showDropdown && filtered.length > 0 && (
+      {showDropdown && (
         <div
           ref={dropdownRef}
           style={{
@@ -119,16 +146,32 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
             background: '#111827',
             border: '1px solid rgba(0, 240, 255, 0.2)',
             borderRadius: '4px',
-            maxHeight: '350px',
+            maxHeight: '380px',
             overflowY: 'auto',
             zIndex: 999,
-            minWidth: '340px',
+            minWidth: '380px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
           }}
         >
-          {filtered.map(ticker => {
-            const companyName = nameMap[ticker] || '';
-            const isUK = ticker.endsWith('.L');
-            const isTrained = trainedSet.has(ticker);
+          {/* Search status */}
+          {searching && (
+            <div style={{
+              padding: '8px 12px',
+              fontFamily: "'Share Tech Mono', monospace",
+              fontSize: '0.65rem',
+              color: '#64748b',
+              letterSpacing: '1px',
+              textAlign: 'center',
+            }}>Searching US & UK markets...</div>
+          )}
+
+          {/* Results */}
+          {results.map((item) => {
+            const ticker = item.ticker;
+            const companyName = item.name;
+            const isUK = item.exchange === 'LSE';
+            const isTrained = item.trained || trainedSet.has(ticker);
+            const isYahoo = item.source === 'yahoo';
 
             return (
               <div
@@ -142,7 +185,6 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
                   gap: '8px',
                   fontFamily: "'Share Tech Mono', monospace",
                   fontSize: '0.75rem',
-                  color: isTrained ? '#00ff88' : '#94a3b8',
                   borderBottom: '1px solid rgba(255,255,255,0.03)',
                   transition: 'background 0.15s',
                 }}
@@ -152,7 +194,7 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
                 {/* Ticker symbol */}
                 <span style={{
                   fontWeight: 700,
-                  minWidth: '65px',
+                  minWidth: '72px',
                   color: isTrained ? '#00ff88' : '#00f0ff',
                   fontSize: '0.8rem',
                 }}>{ticker}</span>
@@ -169,40 +211,53 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
 
                 {/* Badges */}
                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                  {isUK && (
-                    <span style={{
-                      fontSize: '0.55rem',
-                      background: 'rgba(55,138,221,0.15)',
-                      color: '#378ADD',
-                      padding: '2px 5px',
-                      borderRadius: '2px',
-                      letterSpacing: '1px',
-                    }}>UK</span>
-                  )}
-                  {!isUK && (
-                    <span style={{
-                      fontSize: '0.55rem',
-                      background: 'rgba(0,240,255,0.08)',
-                      color: '#64748b',
-                      padding: '2px 5px',
-                      borderRadius: '2px',
-                      letterSpacing: '1px',
-                    }}>US</span>
-                  )}
+                  <span style={{
+                    fontSize: '0.5rem',
+                    background: isUK ? 'rgba(55,138,221,0.15)' : 'rgba(0,240,255,0.08)',
+                    color: isUK ? '#378ADD' : '#64748b',
+                    padding: '2px 5px',
+                    borderRadius: '2px',
+                    letterSpacing: '1px',
+                    fontWeight: 600,
+                  }}>{isUK ? 'UK' : 'US'}</span>
                   {isTrained && (
                     <span style={{
-                      fontSize: '0.55rem',
+                      fontSize: '0.5rem',
                       background: 'rgba(0,255,136,0.15)',
                       color: '#00ff88',
                       padding: '2px 5px',
                       borderRadius: '2px',
                       letterSpacing: '1px',
+                      fontWeight: 600,
                     }}>ML</span>
                   )}
                 </div>
               </div>
             );
           })}
+
+          {/* No results message */}
+          {!searching && results.length === 0 && query && (
+            <div style={{
+              padding: '16px 12px',
+              fontFamily: "'Share Tech Mono', monospace",
+              fontSize: '0.7rem',
+              color: '#64748b',
+              textAlign: 'center',
+              letterSpacing: '0.5px',
+            }}>No stocks found for "{query}"</div>
+          )}
+
+          {/* Footer hint */}
+          <div style={{
+            padding: '6px 12px',
+            fontFamily: "'Share Tech Mono', monospace",
+            fontSize: '0.55rem',
+            color: '#475569',
+            textAlign: 'center',
+            letterSpacing: '0.5px',
+            borderTop: '1px solid rgba(255,255,255,0.05)',
+          }}>12,000+ US &amp; 2,000+ UK stocks &middot; Search by name or symbol</div>
         </div>
       )}
     </div>

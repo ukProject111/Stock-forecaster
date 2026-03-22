@@ -69,25 +69,89 @@ def list_trained():
 
 @app.get("/search")
 def search_tickers(q: str = Query(..., description="Search query for ticker or company name")):
-    """Search tickers by symbol prefix."""
-    q = q.upper().strip()
+    """Search tickers by symbol or company name.
+    First checks local list, then falls back to Yahoo Finance search API
+    to support ALL US and UK stocks (~14,000+)."""
+    q_upper = q.upper().strip()
+    q_lower = q.lower().strip()
+
+    if not q_lower:
+        return {"query": q, "results": [], "count": 0}
+
     all_tickers = get_nasdaq_tickers()
-    matches = [t for t in all_tickers if t.startswith(q)]
-
-    # also check if query is contained in ticker for broader search
-    if len(matches) < 10:
-        fuzzy = [t for t in all_tickers if q in t and t not in matches]
-        matches.extend(fuzzy[:20])
-
     trained = get_trained_tickers()
+    trained_set = set(trained)
+
+    # search local list by symbol and company name
+    local_results = []
+    seen = set()
+
+    # symbol matches first
+    for t in all_tickers:
+        if t.startswith(q_upper):
+            local_results.append(t)
+            seen.add(t)
+    for t in all_tickers:
+        if q_upper in t and t not in seen:
+            local_results.append(t)
+            seen.add(t)
+
+    # company name matches
+    for t in all_tickers:
+        name = COMPANY_NAMES.get(t, '').lower()
+        if q_lower in name and t not in seen:
+            local_results.append(t)
+            seen.add(t)
+
+    # if we have enough local results, return them
     results = []
-    for t in matches[:30]:
+    for t in local_results[:30]:
         results.append({
             'ticker': t,
-            'trained': t in trained
+            'name': COMPANY_NAMES.get(t, ''),
+            'exchange': 'LSE' if t.endswith('.L') else 'US',
+            'trained': t in trained_set,
+            'source': 'local'
         })
 
-    return {"query": q, "results": results, "count": len(results)}
+    # if less than 10 results, also search Yahoo Finance for ALL stocks
+    if len(results) < 10:
+        try:
+            import requests as req
+            yf_url = "https://query1.finance.yahoo.com/v1/finance/search"
+            yf_params = {'q': q, 'quotesCount': 20, 'newsCount': 0}
+            yf_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            yf_resp = req.get(yf_url, params=yf_params, headers=yf_headers, timeout=5)
+            yf_data = yf_resp.json()
+
+            for quote in yf_data.get('quotes', []):
+                symbol = quote.get('symbol', '')
+                if not symbol or symbol in seen:
+                    continue
+                # only include equity stocks from US and UK exchanges
+                exchange = quote.get('exchange', '')
+                qtype = quote.get('quoteType', '')
+                if qtype not in ('EQUITY', 'ETF'):
+                    continue
+
+                is_uk = symbol.endswith('.L') or exchange in ('LSE', 'LON')
+                is_us = exchange in ('NMS', 'NYQ', 'NGM', 'NCM', 'PCX', 'BTS', 'NAS', 'NYSE', 'NASDAQ', 'AMEX')
+
+                if not is_uk and not is_us:
+                    continue
+
+                seen.add(symbol)
+                results.append({
+                    'ticker': symbol,
+                    'name': quote.get('longname') or quote.get('shortname', ''),
+                    'exchange': 'LSE' if is_uk else 'US',
+                    'trained': symbol in trained_set,
+                    'source': 'yahoo'
+                })
+        except:
+            pass
+
+    return {"query": q, "results": results[:30], "count": len(results)}
 
 
 @app.get("/realtime")
