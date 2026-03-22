@@ -191,7 +191,7 @@ function App() {
         <div className="header-badge">Neural Network Powered</div>
         <h1>STOCK FORECASTER</h1>
         <p className="subtitle">
-          Real-Time Market Data &amp; LSTM Deep Learning Predictions | {allTickers.length}+ Stocks
+          Real-Time Market Data &amp; LSTM Deep Learning Predictions | US &amp; UK Stocks | {allTickers.length}+ Tickers
         </p>
       </header>
 

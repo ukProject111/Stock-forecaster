@@ -77,9 +77,8 @@ def _fetch_yahoo_chart(ticker, period='5d'):
 
 
 def get_nasdaq_tickers():
-    """Return a list of popular/tradeable NASDAQ and major exchange tickers.
-    We store a curated list of ~500 most actively traded stocks.
-    This avoids needing to scrape NASDAQ's full list which changes daily."""
+    """Return a list of popular US and UK stocks.
+    Includes major NASDAQ/NYSE tickers and London Stock Exchange (.L suffix) tickers."""
     global _nasdaq_cache
 
     if _nasdaq_cache is not None:
@@ -91,11 +90,13 @@ def get_nasdaq_tickers():
 
     if os.path.exists(cache_path):
         with open(cache_path, 'r') as f:
-            _nasdaq_cache = json.load(f)
-        return _nasdaq_cache
+            cached = json.load(f)
+        # check if UK stocks are present, if not regenerate
+        if any(t.endswith('.L') for t in cached):
+            _nasdaq_cache = cached
+            return _nasdaq_cache
 
-    # build a comprehensive list of major tickers across exchanges
-    # these are the most traded US stocks that yfinance supports
+    # === US STOCKS (NASDAQ / NYSE) ===
     tickers = [
         # mega cap tech
         "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "NVDA", "META", "TSLA",
@@ -159,7 +160,7 @@ def get_nasdaq_tickers():
         # crypto related
         "MARA", "RIOT", "CLSK", "HUT", "BITF",
 
-        # other popular
+        # other popular US
         "BX", "KKR", "APO", "ARES", "OWL",
         "VMW", "DELL", "HPQ", "HPE",
         "ZM", "DOCU", "OKTA", "TWLO", "MDB", "ESTC", "CFLT",
@@ -170,6 +171,34 @@ def get_nasdaq_tickers():
         "DAL", "UAL", "LUV", "AAL", "ALK", "JBLU",
         "PARA", "WBD", "FOX", "FOXA", "NYT", "NWSA",
         "SE", "GRAB", "BABA", "JD", "PDD", "BIDU", "BILI",
+
+        # === UK STOCKS (London Stock Exchange — .L suffix) ===
+
+        # FTSE 100 — top blue chips
+        "SHEL.L", "AZN.L", "HSBA.L", "ULVR.L", "BP.L", "GSK.L",
+        "RIO.L", "LSEG.L", "REL.L", "DGE.L", "BATS.L", "NG.L",
+        "CRH.L", "CPG.L", "AAL.L", "GLEN.L", "VOD.L", "PRU.L",
+        "LLOY.L", "BARC.L", "NWG.L", "STAN.L", "HSBC.L",
+        "EXPN.L", "RKT.L", "SMT.L", "SSE.L", "SVT.L",
+        "ABF.L", "ANTO.L", "BA.L", "BKG.L", "BNZL.L",
+        "CCH.L", "CNA.L", "ENT.L", "FLTR.L", "FRES.L",
+        "HIK.L", "HLN.L", "HWDN.L", "IAG.L", "IHG.L",
+        "IMB.L", "INF.L", "ITRK.L", "ITV.L", "JD.L",
+        "KGF.L", "LAND.L", "LGEN.L", "MNG.L", "MNDI.L",
+        "MRO.L", "PHNX.L", "PSON.L", "PSN.L", "RMV.L",
+        "RS1.L", "RTO.L", "SBRY.L", "SDR.L", "SGE.L",
+        "SGRO.L", "SN.L", "SPX.L", "STJ.L", "TSCO.L",
+        "TW.L", "WPP.L", "WTB.L",
+
+        # FTSE 250 — popular mid-caps
+        "AUTO.L", "BME.L", "BDEV.L", "DARK.L", "DPLM.L",
+        "GAW.L", "HLMA.L", "IGG.L", "III.L", "JET2.L",
+        "MGGT.L", "OXIG.L", "PAGE.L", "RWS.L", "SFOR.L",
+        "TRN.L", "WEIR.L", "WHR.L", "WOSG.L",
+
+        # popular UK ETFs and investment trusts
+        "ISF.L", "VUKE.L", "VMID.L", "VWRL.L", "VUSA.L",
+        "CSP1.L", "SWDA.L", "EQQQ.L",
     ]
 
     # remove duplicates and sort
