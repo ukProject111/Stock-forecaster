@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -24,15 +24,60 @@ ChartJS.register(
 */
 function ForecastPanel({ ticker, forecast, loading, onForecast, startPrice }) {
   const durations = [1, 3, 5, 10];
+  const [progress, setProgress] = useState(0);
+  const intervalRef = useRef(null);
 
-  // if loading, show spinner
+  // simulated progress bar while loading
+  useEffect(() => {
+    if (loading) {
+      setProgress(0);
+      const steps = [
+        { at: 300, val: 5 },
+        { at: 800, val: 12 },
+        { at: 1500, val: 20 },
+        { at: 2500, val: 30 },
+        { at: 4000, val: 42 },
+        { at: 6000, val: 55 },
+        { at: 8000, val: 65 },
+        { at: 10000, val: 72 },
+        { at: 13000, val: 80 },
+        { at: 16000, val: 85 },
+        { at: 20000, val: 90 },
+        { at: 25000, val: 93 },
+        { at: 30000, val: 95 },
+        { at: 40000, val: 97 },
+        { at: 50000, val: 98 },
+      ];
+      const timers = steps.map(s =>
+        setTimeout(() => setProgress(s.val), s.at)
+      );
+      return () => timers.forEach(t => clearTimeout(t));
+    } else {
+      setProgress(100);
+      // briefly show 100% then reset
+      const t = setTimeout(() => setProgress(0), 400);
+      return () => clearTimeout(t);
+    }
+  }, [loading]);
+
+  // if loading, show spinner with progress
   if (loading) {
     return (
       <div className="forecast-panel">
         <div className="section-title">Long-Term LSTM Forecast</div>
         <div className="loading-overlay">
           <div className="spinner"></div>
-          <p className="loading-text">Generating {ticker} forecast... this may take a moment</p>
+          <p className="loading-text">Generating {ticker} forecast... {progress}%</p>
+          <div style={{
+            width: '200px', height: '4px', background: 'rgba(168,85,247,0.15)',
+            borderRadius: '2px', margin: '12px auto 0', overflow: 'hidden'
+          }}>
+            <div style={{
+              width: `${progress}%`, height: '100%',
+              background: 'linear-gradient(90deg, #a855f7, #ec4899)',
+              borderRadius: '2px', transition: 'width 0.5s ease-out'
+            }} />
+          </div>
         </div>
       </div>
     );
