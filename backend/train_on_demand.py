@@ -43,7 +43,8 @@ def is_trained(ticker):
 
 
 def download_data(ticker):
-    """Download historical data for a ticker if not already cached."""
+    """Download historical data for a ticker if not already cached.
+    Uses Yahoo Finance chart API directly for Docker compatibility."""
     data_dir = os.path.join(get_base_dir(), 'data')
     os.makedirs(data_dir, exist_ok=True)
     csv_path = os.path.join(data_dir, f'{ticker}.csv')
@@ -56,17 +57,56 @@ def download_data(ticker):
             return csv_path
 
     print(f"  Downloading data for {ticker}...")
-    df = yf.download(ticker, start='2015-01-01', period='max')
 
-    if df.empty:
+    import requests
+    from datetime import datetime
+
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+    params = {'range': 'max', 'interval': '1d', 'includePrePost': 'false'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    resp = requests.get(url, params=params, headers=headers, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+
+    result = data.get('chart', {}).get('result')
+    if not result:
         raise ValueError(f"No data available for ticker '{ticker}'. Check if it's a valid symbol.")
 
-    # flatten multi-level columns if present
-    if hasattr(df.columns, 'droplevel'):
-        try:
-            df.columns = df.columns.droplevel('Ticker')
-        except:
-            pass
+    chart = result[0]
+    timestamps = chart.get('timestamp', [])
+    quote = chart.get('indicators', {}).get('quote', [{}])[0]
+
+    opens = quote.get('open', [])
+    highs = quote.get('high', [])
+    lows = quote.get('low', [])
+    closes = quote.get('close', [])
+    volumes = quote.get('volume', [])
+
+    if not timestamps or not closes:
+        raise ValueError(f"No data available for ticker '{ticker}'. Check if it's a valid symbol.")
+
+    rows = []
+    for i, ts in enumerate(timestamps):
+        if closes[i] is None:
+            continue
+        dt = datetime.utcfromtimestamp(ts)
+        rows.append({
+            'Date': dt.strftime('%Y-%m-%d'),
+            'Open': opens[i] or 0,
+            'High': highs[i] or 0,
+            'Low': lows[i] or 0,
+            'Close': closes[i],
+            'Volume': volumes[i] or 0,
+        })
+
+    df = pd.DataFrame(rows)
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.set_index('Date')
+    df = df.sort_index()
+
+    if len(df) < 200:
+        raise ValueError(f"Not enough data for {ticker}. Need at least 200 days, got {len(df)}.")
 
     df.to_csv(csv_path)
     print(f"  Saved {ticker}.csv - {len(df)} rows")
