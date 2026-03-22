@@ -22,6 +22,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [training, setTraining] = useState(false);
   const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastProgress, setForecastProgress] = useState(0);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('realtime');
   const [trainStatus, setTrainStatus] = useState('');
@@ -108,26 +109,48 @@ function App() {
     }
   };
 
-  // 10-year forecast
+  // 10-year forecast with real-time progress via SSE
   const handleForecast = async (years) => {
     if (!selectedTicker || !isTrained) return;
     setForecastLoading(true);
+    setForecastProgress(0);
     setError('');
     setActiveTab('forecast');
 
     try {
-      const res = await axios.get(
-        `${API_URL}/forecast?ticker=${selectedTicker}&years=${years}`
-      );
-      setForecast(res.data);
-    } catch (err) {
-      if (err.response && err.response.data && err.response.data.detail) {
-        setError(err.response.data.detail);
-      } else {
-        setError('Forecast failed.');
+      const url = `${API_URL}/forecast-stream?ticker=${selectedTicker}&years=${years}`;
+      const response = await fetch(url);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const msg = JSON.parse(line.slice(6));
+            if (msg.type === 'progress') {
+              setForecastProgress(msg.percent);
+            } else if (msg.type === 'result') {
+              setForecast(msg.data);
+            } else if (msg.type === 'error') {
+              setError(msg.detail);
+            }
+          } catch (e) { /* skip bad lines */ }
+        }
       }
+    } catch (err) {
+      setError('Forecast failed. Backend may be starting up — try again.');
     } finally {
       setForecastLoading(false);
+      setForecastProgress(0);
     }
   };
 
@@ -288,6 +311,7 @@ function App() {
             ticker={selectedTicker}
             forecast={forecast}
             loading={forecastLoading}
+            progress={forecastProgress}
             onForecast={handleForecast}
             startPrice={prediction ? prediction.last_close : null}
           />

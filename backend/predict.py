@@ -134,8 +134,9 @@ def get_prediction(ticker):
     }
 
 
-def get_long_term_forecast(ticker, years=10):
-    """Generate a multi-year rolling forecast using the LSTM model."""
+def get_long_term_forecast(ticker, years=10, progress_callback=None):
+    """Generate a multi-year rolling forecast using the LSTM model.
+    Uses batched prediction for speed. Calls progress_callback(pct) if provided."""
     ticker = ticker.upper().strip()
 
     if not is_ticker_trained(ticker):
@@ -156,6 +157,10 @@ def get_long_term_forecast(ticker, years=10):
     all_preds = []
     current_window = list(scaled_window)
 
+    # predict one step at a time (each depends on previous)
+    # but report progress in chunks
+    report_every = max(1, total_days // 100)
+
     for day in range(total_days):
         inp = np.array(current_window[-WINDOW_SIZE:]).reshape(1, WINDOW_SIZE, 1)
         pred_scaled = lstm_model.predict(inp, verbose=0)[0][0]
@@ -170,6 +175,11 @@ def get_long_term_forecast(ticker, years=10):
         })
 
         current_window.append(float(pred_scaled))
+
+        # report progress
+        if progress_callback and (day + 1) % report_every == 0:
+            pct = int(((day + 1) / total_days) * 100)
+            progress_callback(pct)
 
     # sample monthly
     monthly_samples = [all_preds[0]]
@@ -187,6 +197,9 @@ def get_long_term_forecast(ticker, years=10):
             'predicted_price': all_preds[day_idx]['price'],
             'date': all_preds[day_idx]['date']
         })
+
+    if progress_callback:
+        progress_callback(100)
 
     return {
         'ticker': ticker,

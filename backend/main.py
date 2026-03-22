@@ -7,8 +7,11 @@ Serves predictions, real-time data, historical data, and model metrics.
 Mehmet Tanil Kaplan - T0429362
 """
 
+import json
+import asyncio
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from predict import (
     get_prediction, get_history, get_metrics,
@@ -195,3 +198,68 @@ def forecast(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Forecast failed: {str(e)}")
+
+
+@app.get("/forecast-stream")
+def forecast_stream(
+    ticker: str = Query(..., description="Stock ticker symbol"),
+    years: int = Query(10, description="Years to forecast (1-10)")
+):
+    """Stream forecast progress via Server-Sent Events, then send final result."""
+    ticker = ticker.upper().strip()
+    years = max(1, min(10, years))
+
+    def generate():
+        last_pct = [0]
+
+        def on_progress(pct):
+            if pct > last_pct[0]:
+                last_pct[0] = pct
+                yield f"data: {json.dumps({'type': 'progress', 'percent': pct})}\n\n"
+
+        # we cant yield from inside the callback directly, so collect events
+        progress_events = []
+
+        def collect_progress(pct):
+            if pct > (progress_events[-1] if progress_events else 0):
+                progress_events.append(pct)
+
+        try:
+            # run forecast with progress tracking
+            import threading
+            result_holder = [None]
+            error_holder = [None]
+
+            def run_forecast():
+                try:
+                    result_holder[0] = get_long_term_forecast(ticker, years, collect_progress)
+                except Exception as e:
+                    error_holder[0] = str(e)
+
+            thread = threading.Thread(target=run_forecast)
+            thread.start()
+
+            # stream progress while thread runs
+            sent = 0
+            while thread.is_alive():
+                thread.join(timeout=0.3)
+                while sent < len(progress_events):
+                    pct = progress_events[sent]
+                    yield f"data: {json.dumps({'type': 'progress', 'percent': pct})}\n\n"
+                    sent += 1
+
+            # send any remaining progress
+            while sent < len(progress_events):
+                pct = progress_events[sent]
+                yield f"data: {json.dumps({'type': 'progress', 'percent': pct})}\n\n"
+                sent += 1
+
+            if error_holder[0]:
+                yield f"data: {json.dumps({'type': 'error', 'detail': error_holder[0]})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'result', 'data': result_holder[0]})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
