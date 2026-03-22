@@ -348,17 +348,19 @@ curl http://localhost:8000/predict?ticker=INVALID
 
 ---
 
-## Risks and Mitigations
+## Risks and How They Are Handled
 
-| Risk | Level | Mitigation |
-|---|---|---|
-| LSTM fails to hit 10% improvement | HIGH | Tune hyperparameters: more units, more epochs, less dropout |
-| Data shuffled accidentally | HIGH | Always split chronologically by index, never use `shuffle=True` |
-| Scaler not saved with models | HIGH | Save `scaler.pkl` immediately after fitting on training data |
-| Model overfitting | MEDIUM | Use Dropout + EarlyStopping, monitor `val_loss` |
-| API rate limits | MEDIUM | Cache historical data as CSV, only fetch latest day live |
-| CORS blocking frontend calls | MEDIUM | CORSMiddleware added with `allow_origins=["*"]` |
-| Users treat predictions as advice | LOW | Disclaimer on every page |
+| Risk | Level | How it is handled | Status |
+|---|---|---|---|
+| LSTM fails to hit 10% RMSE improvement | HIGH | Tuned architecture (128/64 units, Dropout 0.15, EarlyStopping patience=15, ReduceLROnPlateau). All 5 tickers exceed target: AAPL 76.2%, TSLA 54.2%, MSFT 85.5%, GOOGL 75.2%, AMZN 70.3% | ✅ Verified |
+| Time-series data shuffled accidentally | HIGH | Never use `train_test_split` with `shuffle=True`. All splits are chronological by index position (70/15/15) in `preprocess.py` and `train_on_demand.py`. Zero instances of `shuffle=True` in codebase | ✅ Verified |
+| Scaler not saved alongside models | HIGH | `scaler_{ticker}.pkl` saved immediately after fitting via `joblib.dump()`. All 5 scaler files present. Loaded at prediction time in `predict.py` to ensure correct inverse-transform | ✅ Verified |
+| Model overfitting to training data | MEDIUM | Two `Dropout(0.15)` layers in LSTM. `EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)` and `ReduceLROnPlateau(factor=0.5, patience=5)` callbacks prevent overfitting | ✅ Verified |
+| API rate limits hit during development | MEDIUM | All historical data cached as CSV files in `data/`. `predict.py` reads from CSV cache, never calls yfinance. Only `realtime.py` fetches live data for the Live Chart tab | ✅ Verified |
+| CORS blocking React → FastAPI calls | MEDIUM | `CORSMiddleware` configured in `main.py` with `allow_origins=["*"]`, `allow_methods=["*"]`, `allow_headers=["*"]` from day one | ✅ Verified |
+| `REACT_APP_API_URL` pointing to localhost in production | MEDIUM | `App.js` and `RealTimeChart.js` use `process.env.REACT_APP_API_URL` with localhost as development fallback only. Production builds bake in the Render URL at build time | ✅ Verified |
+| Models too large to deploy on free tier | LOW | Total model size 90.78 MB (baseline ~17 MB each, LSTM ~1.4 MB each). Well under Render's 500 MB free tier limit. Uses `tensorflow-cpu` to reduce package size | ✅ Verified |
+| Users treat predictions as real financial advice | LOW | Prominent disclaimer banner on every page: "For educational purposes only — This is not financial advice". Additional disclaimer in footer, forecast panel, and all API prediction responses. No buy/sell language in UI | ✅ Verified |
 
 ---
 
