@@ -97,9 +97,7 @@ def realtime(
 
     data = get_realtime_data(ticker, period, interval)
     if data is None:
-        raise HTTPException(status_code=404, detail=f"No data found for {ticker}. yfinance returned None.")
-    if "error_debug" in data:
-        raise HTTPException(status_code=404, detail=data["error_debug"])
+        raise HTTPException(status_code=404, detail=f"No data found for {ticker}. Check the ticker symbol.")
 
     return data
 
