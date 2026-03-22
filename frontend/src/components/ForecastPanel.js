@@ -17,6 +17,7 @@ ChartJS.register(
   LineElement, Title, Tooltip, Legend, Filler
 );
 
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 const DRIFT = 0.13;
 const VOL_MAP = { 1: 0.18, 3: 0.20, 5: 0.22, 10: 0.25 };
 const HIST_BLUE = '#378ADD';
@@ -38,25 +39,17 @@ function ForecastPanel({ ticker, forecast, loading, progress, onForecast, startP
   const [chartData, setChartData] = useState(null);
   const [metrics, setMetrics] = useState(null);
 
-  // fetch 10 years of historical monthly data from Yahoo Finance
+  // fetch 10 years of historical monthly data via backend proxy
   const fetchHistory = useCallback(async () => {
     try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`;
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-      });
+      const res = await fetch(`${API_URL}/history-monthly?ticker=${ticker}&years=10`);
       const json = await res.json();
-      const result = json.chart?.result?.[0];
-      if (!result) return;
+      if (!json.history) return;
 
-      const ts = result.timestamp || [];
-      const closes = result.indicators?.quote?.[0]?.close || [];
-      const points = [];
-      for (let i = 0; i < ts.length; i++) {
-        if (closes[i] != null) {
-          points.push({ date: new Date(ts[i] * 1000), price: closes[i] });
-        }
-      }
+      const points = json.history.map(p => ({
+        date: new Date(p.date),
+        price: p.price
+      }));
       setHistData(points);
     } catch (e) {
       console.error('Failed to fetch history:', e);

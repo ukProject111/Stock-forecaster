@@ -168,6 +168,51 @@ def history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/history-monthly")
+def history_monthly(
+    ticker: str = Query(..., description="Stock ticker symbol"),
+    years: int = Query(10, description="Years of history")
+):
+    """Fetch monthly historical prices from Yahoo Finance for charting."""
+    ticker = ticker.upper().strip()
+    from realtime import _fetch_yahoo_chart, _PERIOD_MAP
+    import requests as req
+
+    try:
+        range_str = f'{years}y' if years <= 10 else '10y'
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        params = {'range': range_str, 'interval': '1mo', 'includePrePost': 'false'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+        resp = req.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+
+        result = data.get('chart', {}).get('result')
+        if not result:
+            raise HTTPException(status_code=404, detail=f"No monthly data for {ticker}")
+
+        chart = result[0]
+        timestamps = chart.get('timestamp', [])
+        closes = chart.get('indicators', {}).get('quote', [{}])[0].get('close', [])
+
+        points = []
+        for i, ts in enumerate(timestamps):
+            if closes[i] is not None:
+                from datetime import datetime
+                dt = datetime.utcfromtimestamp(ts)
+                points.append({
+                    'date': dt.strftime('%Y-%m-%d'),
+                    'price': round(float(closes[i]), 2)
+                })
+
+        return {"ticker": ticker, "count": len(points), "history": points}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/metrics")
 def metrics(ticker: str = Query(..., description="Stock ticker symbol")):
     """Return MSE and RMSE for both models."""
