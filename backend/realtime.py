@@ -133,7 +133,8 @@ def get_realtime_data(ticker, period='5d', interval='15m'):
         df = stock.history(period=period)
 
         if df is None or df.empty:
-            return None
+            # return error info instead of None so we can debug
+            return {"error_debug": f"yfinance returned empty for {ticker} period={period}", "ticker": ticker}
 
         # build response
         prices = []
