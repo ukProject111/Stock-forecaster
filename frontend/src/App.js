@@ -54,25 +54,54 @@ function App() {
     setActiveTab('realtime');
   };
 
-  // train a new ticker on demand
+  // train a new ticker on demand with real-time SSE progress
   const handleTrain = async () => {
     if (!selectedTicker) return;
     setTraining(true);
     setError('');
-    setTrainStatus(`Training models for ${selectedTicker}... this takes 1-2 minutes.`);
+    setTrainStatus(`Connecting to server...`);
 
     try {
-      const res = await axios.get(`${API_URL}/train?ticker=${selectedTicker}`);
-      setTrainStatus(`${selectedTicker} trained! LSTM improvement: ${res.data.improvement_pct}%`);
-      // refresh trained list
-      const tickerRes = await axios.get(`${API_URL}/tickers`);
-      setTrainedTickers(tickerRes.data.trained || []);
-    } catch (err) {
-      if (err.response && err.response.data && err.response.data.detail) {
-        setError(err.response.data.detail);
-      } else {
-        setError('Training failed. Check if the ticker is valid.');
+      const url = `${API_URL}/train-stream?ticker=${selectedTicker}`;
+      const response = await fetch(url);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const msg = JSON.parse(line.slice(6));
+            if (msg.type === 'progress') {
+              setTrainStatus(`[${msg.percent}%] ${msg.stage}`);
+            } else if (msg.type === 'result') {
+              const d = msg.data;
+              if (d.status === 'already_trained') {
+                setTrainStatus(`${selectedTicker} is already trained and ready!`);
+              } else {
+                const imp = d.improvement_pct != null ? d.improvement_pct.toFixed(1) : '—';
+                setTrainStatus(`${selectedTicker} trained! Baseline RMSE: ${d.baseline_rmse} | LSTM RMSE: ${d.lstm_rmse} | Improvement: ${imp}%`);
+              }
+              // refresh trained list
+              const tickerRes = await axios.get(`${API_URL}/tickers`);
+              setTrainedTickers(tickerRes.data.trained || []);
+            } else if (msg.type === 'error') {
+              setError(msg.detail);
+              setTrainStatus('');
+            }
+          } catch (e) { /* skip bad lines */ }
+        }
       }
+    } catch (err) {
+      setError('Training failed. Backend may be starting up — try again.');
       setTrainStatus('');
     } finally {
       setTraining(false);
@@ -202,17 +231,17 @@ function App() {
           )}
         </div>
 
-        {/* Training status */}
+        {/* Training status with progress */}
         {trainStatus && (
           <div style={{
             textAlign: 'center',
-            padding: '10px 16px',
+            padding: '12px 16px',
             marginBottom: '16px',
             background: training ? 'rgba(168,85,247,0.1)' : 'rgba(0,255,136,0.1)',
             border: `1px solid ${training ? 'rgba(168,85,247,0.3)' : 'rgba(0,255,136,0.3)'}`,
             borderRadius: '4px',
             fontFamily: "'Share Tech Mono', monospace",
-            fontSize: '0.8rem',
+            fontSize: '0.75rem',
             color: training ? '#a855f7' : '#00ff88',
             letterSpacing: '0.5px',
           }}>
@@ -221,6 +250,19 @@ function App() {
               borderWidth: '2px', marginRight: '8px', verticalAlign: 'middle'
             }}></span>}
             {trainStatus}
+            {training && trainStatus.match(/\[(\d+)%\]/) && (
+              <div style={{
+                width: '100%', maxWidth: '300px', height: '5px',
+                background: 'rgba(168,85,247,0.15)', borderRadius: '3px',
+                margin: '10px auto 0', overflow: 'hidden'
+              }}>
+                <div style={{
+                  width: `${trainStatus.match(/\[(\d+)%\]/)[1]}%`, height: '100%',
+                  background: 'linear-gradient(90deg, #a855f7, #ec4899)',
+                  borderRadius: '3px', transition: 'width 0.4s ease-out'
+                }} />
+              </div>
+            )}
           </div>
         )}
 

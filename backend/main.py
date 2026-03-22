@@ -135,6 +135,155 @@ def train(ticker: str = Query(..., description="Ticker to train models for")):
         raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
 
 
+@app.get("/train-stream")
+def train_stream(ticker: str = Query(..., description="Ticker to train")):
+    """Stream training progress via SSE with real-time status updates."""
+    ticker = ticker.upper().strip()
+
+    if is_trained(ticker):
+        def already():
+            yield f"data: {json.dumps({'type': 'progress', 'percent': 100, 'stage': 'Already trained'})}\n\n"
+            yield f"data: {json.dumps({'type': 'result', 'data': {'ticker': ticker, 'status': 'already_trained', 'message': f'Models for {ticker} are already trained and ready.'}})}\n\n"
+        return StreamingResponse(already(), media_type="text/event-stream")
+
+    def generate():
+        import threading
+
+        progress_events = []
+        result_holder = [None]
+        error_holder = [None]
+
+        def run():
+            try:
+                # stage 1: downloading data
+                progress_events.append({'percent': 5, 'stage': 'Downloading stock data...'})
+                from train_on_demand import download_data, prepare_data
+                download_data(ticker)
+                progress_events.append({'percent': 15, 'stage': 'Data downloaded. Preparing windows...'})
+
+                # stage 2: prepare data
+                data = prepare_data(ticker)
+                scaler = data['scaler']
+                progress_events.append({'percent': 25, 'stage': 'Training baseline model...'})
+
+                # stage 3: train baseline
+                import numpy as np
+                from sklearn.ensemble import RandomForestRegressor
+                from sklearn.metrics import mean_squared_error
+
+                X_train_flat = data['X_train'].reshape(len(data['X_train']), -1)
+                X_test_flat = data['X_test'].reshape(len(data['X_test']), -1)
+                baseline = RandomForestRegressor(n_estimators=100, random_state=42)
+                baseline.fit(X_train_flat, data['y_train'].ravel())
+
+                bl_pred = scaler.inverse_transform(baseline.predict(X_test_flat).reshape(-1, 1))
+                bl_actual = scaler.inverse_transform(data['y_test'].reshape(-1, 1))
+                bl_mse = mean_squared_error(bl_actual, bl_pred)
+                bl_rmse = np.sqrt(bl_mse)
+                progress_events.append({'percent': 40, 'stage': f'Baseline RMSE: {bl_rmse:.2f}. Training LSTM...'})
+
+                # stage 4: train LSTM
+                import os
+                os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+                from tensorflow.keras.models import Sequential
+                from tensorflow.keras.layers import LSTM as LSTMLayer, Dense, Dropout
+                from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback
+                from tensorflow.keras.optimizers import Adam
+
+                WINDOW_SIZE = 50
+                X_train = data['X_train'].reshape(-1, WINDOW_SIZE, 1)
+                X_val = data['X_val'].reshape(-1, WINDOW_SIZE, 1)
+                X_test = data['X_test'].reshape(-1, WINDOW_SIZE, 1)
+
+                lstm = Sequential([
+                    LSTMLayer(128, return_sequences=True, input_shape=(WINDOW_SIZE, 1)),
+                    Dropout(0.15),
+                    LSTMLayer(64, return_sequences=False),
+                    Dropout(0.15),
+                    Dense(32, activation='relu'),
+                    Dense(1)
+                ])
+                lstm.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+
+                class ProgressCB(Callback):
+                    def on_epoch_end(self, epoch, logs=None):
+                        pct = 40 + int((epoch / 100) * 45)
+                        pct = min(pct, 85)
+                        progress_events.append({'percent': pct, 'stage': f'LSTM epoch {epoch+1} — val_loss: {logs.get("val_loss", 0):.6f}'})
+
+                lstm.fit(
+                    X_train, data['y_train'], epochs=100, batch_size=32,
+                    validation_data=(X_val, data['y_val']),
+                    callbacks=[
+                        EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True),
+                        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-5),
+                        ProgressCB()
+                    ], verbose=0
+                )
+
+                ls_pred = scaler.inverse_transform(lstm.predict(X_test, verbose=0))
+                ls_actual = scaler.inverse_transform(data['y_test'].reshape(-1, 1))
+                ls_mse = mean_squared_error(ls_actual, ls_pred)
+                ls_rmse = np.sqrt(ls_mse)
+                improvement = ((bl_rmse - ls_rmse) / bl_rmse) * 100
+
+                progress_events.append({'percent': 90, 'stage': f'LSTM RMSE: {ls_rmse:.2f}. Saving models...'})
+
+                # stage 5: save
+                import joblib
+                base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                models_dir = os.path.join(base, 'models')
+                os.makedirs(models_dir, exist_ok=True)
+
+                joblib.dump(baseline, os.path.join(models_dir, f'baseline_{ticker}.pkl'))
+                lstm.save(os.path.join(models_dir, f'lstm_{ticker}.keras'))
+                joblib.dump(scaler, os.path.join(models_dir, f'scaler_{ticker}.pkl'))
+
+                bl_metrics_path = os.path.join(models_dir, 'baseline_metrics.pkl')
+                ls_metrics_path = os.path.join(models_dir, 'lstm_metrics.pkl')
+                bl_metrics = joblib.load(bl_metrics_path) if os.path.exists(bl_metrics_path) else {}
+                ls_metrics = joblib.load(ls_metrics_path) if os.path.exists(ls_metrics_path) else {}
+                bl_metrics[ticker] = {'mse': bl_mse, 'rmse': bl_rmse}
+                ls_metrics[ticker] = {'mse': ls_mse, 'rmse': ls_rmse}
+                joblib.dump(bl_metrics, bl_metrics_path)
+                joblib.dump(ls_metrics, ls_metrics_path)
+
+                progress_events.append({'percent': 100, 'stage': 'Training complete!'})
+
+                result_holder[0] = {
+                    'ticker': ticker,
+                    'baseline_rmse': round(float(bl_rmse), 4),
+                    'lstm_rmse': round(float(ls_rmse), 4),
+                    'improvement_pct': round(float(improvement), 2),
+                    'status': 'trained'
+                }
+            except Exception as e:
+                error_holder[0] = str(e)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+
+        sent = 0
+        while thread.is_alive():
+            thread.join(timeout=0.5)
+            while sent < len(progress_events):
+                evt = progress_events[sent]
+                yield f"data: {json.dumps({'type': 'progress', 'percent': evt['percent'], 'stage': evt['stage']})}\n\n"
+                sent += 1
+
+        while sent < len(progress_events):
+            evt = progress_events[sent]
+            yield f"data: {json.dumps({'type': 'progress', 'percent': evt['percent'], 'stage': evt['stage']})}\n\n"
+            sent += 1
+
+        if error_holder[0]:
+            yield f"data: {json.dumps({'type': 'error', 'detail': error_holder[0]})}\n\n"
+        else:
+            yield f"data: {json.dumps({'type': 'result', 'data': result_holder[0]})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 @app.get("/predict")
 def predict(ticker: str = Query(..., description="Stock ticker symbol")):
     """Get next-day prediction. Ticker must be trained first (use /train endpoint)."""
