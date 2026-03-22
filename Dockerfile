@@ -2,7 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install deps with no cache to save memory
+# Install system deps for curl_cffi
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libcurl4-openssl-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
