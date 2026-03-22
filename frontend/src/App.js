@@ -300,7 +300,7 @@ function App() {
 
       <footer className="app-footer">
         <p className="footer-brand">
-          Mehmet Tanil Kaplan &middot; T0429362 &middot; Nottingham Trent University
+          Mehmet Tanil Kaplan &middot; T0429362 &middot; Nottingham Trent University &middot; Supervisor: Williams Magdalena
         </p>
         <p className="disclaimer-small">
           For educational purposes only. This is not financial advice.
