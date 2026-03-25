@@ -411,13 +411,13 @@ def get_realtime_data(ticker, period='5d', interval='15m'):
 
 
 def get_ticker_info(ticker):
-    """Get basic info about a stock ticker."""
+    """Get basic info about a stock ticker using Yahoo Finance quoteSummary API."""
     if ticker in _ticker_info_cache:
         return _ticker_info_cache[ticker]
 
     result = {
         'ticker': ticker,
-        'name': ticker,
+        'name': COMPANY_NAMES.get(ticker, ticker),
         'sector': 'N/A',
         'industry': 'N/A',
         'market_cap': 0,
@@ -425,12 +425,44 @@ def get_ticker_info(ticker):
         'exchange': 'N/A',
     }
 
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+
+    # try Yahoo Finance quoteSummary for detailed info
     try:
-        prices = _fetch_yahoo_chart(ticker, '5d')
-        if prices:
-            result['current_price'] = prices[-1]['close']
+        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+        params = {'modules': 'assetProfile,price'}
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        summary = data.get('quoteSummary', {}).get('result', [{}])[0]
+
+        profile = summary.get('assetProfile', {})
+        price = summary.get('price', {})
+
+        if profile.get('sector'):
+            result['sector'] = profile['sector']
+        if profile.get('industry'):
+            result['industry'] = profile['industry']
+        if price.get('exchangeName'):
+            result['exchange'] = price['exchangeName']
+        if price.get('currency'):
+            result['currency'] = price['currency']
+        if price.get('marketCap', {}).get('raw'):
+            result['market_cap'] = price['marketCap']['raw']
+        if price.get('regularMarketPrice', {}).get('raw'):
+            result['current_price'] = round(float(price['regularMarketPrice']['raw']), 2)
+        if price.get('shortName'):
+            result['name'] = price['shortName']
     except:
-        pass
+        # fallback to chart API for at least the current price
+        try:
+            prices = _fetch_yahoo_chart(ticker, '5d')
+            if prices:
+                result['current_price'] = prices[-1]['close']
+        except:
+            pass
 
     _ticker_info_cache[ticker] = result
     return result
