@@ -23,6 +23,167 @@ A full-stack web application that fetches real-world stock market data and uses 
 | **Real-Time Progress** | Server-Sent Events (SSE) streaming shows actual backend computation progress during forecast generation |
 | **On-Demand Training** | Train models for any NASDAQ ticker directly from the UI |
 
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph Frontend ["Frontend (Vercel)"]
+        UI[React Dashboard]
+        LC[Live Chart]
+        MP[ML Prediction]
+        FP[10-Year Forecast]
+        MET[Model Metrics]
+        TS[Ticker Search]
+    end
+
+    subgraph Backend ["Backend (Render - Docker)"]
+        API[FastAPI Server]
+        RT[realtime.py]
+        PR[predict.py]
+        TR[train_on_demand.py]
+        PP[preprocess.py]
+    end
+
+    subgraph Models ["ML Models"]
+        BL[Baseline - Random Forest .pkl]
+        LSTM[LSTM - Keras .keras]
+        SC[MinMaxScaler .pkl]
+    end
+
+    subgraph Data ["Data Layer"]
+        YF[Yahoo Finance API]
+        CSV[Cached CSV Files]
+        SB[(Supabase DB)]
+    end
+
+    UI --> API
+    LC --> RT
+    MP --> PR
+    FP --> PR
+    MET --> PR
+    TS --> API
+
+    RT --> YF
+    TR --> YF
+    TR --> CSV
+    TR --> BL
+    TR --> LSTM
+    TR --> SC
+    PR --> BL
+    PR --> LSTM
+    PR --> SC
+    PR --> CSV
+    PP --> CSV
+    API --> SB
+
+    style Frontend fill:#0f172a,stroke:#00f0ff,color:#e2e8f0
+    style Backend fill:#0f172a,stroke:#a855f7,color:#e2e8f0
+    style Models fill:#0f172a,stroke:#00ff88,color:#e2e8f0
+    style Data fill:#0f172a,stroke:#ff6b35,color:#e2e8f0
+```
+
+## Data Pipeline
+
+```mermaid
+flowchart LR
+    A[Yahoo Finance API] -->|Download OHLCV| B[Raw CSV Data]
+    B -->|Extract Close| C[Price Series]
+    C -->|MinMaxScaler 0-1| D[Scaled Data]
+    D -->|50-day Sliding Window| E[X, y Arrays]
+    E -->|70 / 15 / 15 Split| F{Train / Val / Test}
+    F -->|Train| G[Random Forest]
+    F -->|Train| H[LSTM Network]
+    G -->|Evaluate| I[MSE / RMSE]
+    H -->|Evaluate| I
+    I -->|Compare| J["LSTM ≥ 10% Better?"]
+    J -->|Yes ✓| K[Save Models to Disk]
+    J -->|No ✗| L[Retune Hyperparameters]
+```
+
+## LSTM Model Architecture
+
+```mermaid
+graph TD
+    INPUT["Input Layer<br/>shape: (50, 1)<br/>50 days × 1 feature"] --> LSTM1["LSTM Layer 1<br/>128 units, return_sequences=True"]
+    LSTM1 --> DROP1["Dropout 0.15"]
+    DROP1 --> LSTM2["LSTM Layer 2<br/>64 units, return_sequences=False"]
+    LSTM2 --> DROP2["Dropout 0.15"]
+    DROP2 --> DENSE1["Dense Layer<br/>32 units, ReLU"]
+    DENSE1 --> OUTPUT["Output Layer<br/>1 unit (Next-Day Price)"]
+
+    style INPUT fill:#1e293b,stroke:#00f0ff,color:#e2e8f0
+    style LSTM1 fill:#1e293b,stroke:#a855f7,color:#e2e8f0
+    style LSTM2 fill:#1e293b,stroke:#a855f7,color:#e2e8f0
+    style DROP1 fill:#1e293b,stroke:#ff6b35,color:#e2e8f0
+    style DROP2 fill:#1e293b,stroke:#ff6b35,color:#e2e8f0
+    style DENSE1 fill:#1e293b,stroke:#00ff88,color:#e2e8f0
+    style OUTPUT fill:#1e293b,stroke:#00ff88,color:#e2e8f0
+```
+
+## User Journey
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Frontend as React Frontend
+    participant API as FastAPI Backend
+    participant YF as Yahoo Finance
+    participant ML as ML Models
+
+    User->>Frontend: Select ticker (e.g. AAPL)
+    Frontend->>API: GET /realtime?ticker=AAPL
+    API->>YF: Fetch live price data
+    YF-->>API: OHLCV data
+    API-->>Frontend: Price chart data
+    Frontend->>User: Display Live Chart
+
+    User->>Frontend: Click "Run ML Analysis"
+    Frontend->>API: GET /predict, /history, /metrics
+    API->>ML: Load models + scaler
+    ML-->>API: Baseline & LSTM predictions
+    API-->>Frontend: Predictions + metrics
+    Frontend->>User: Show ML Prediction tab
+
+    User->>Frontend: Click "10-Year Forecast"
+    Frontend->>API: GET /forecast-stream (SSE)
+    loop Every ~25 trading days
+        API-->>Frontend: Progress update (1-100%)
+    end
+    API-->>Frontend: Final forecast data
+    Frontend->>User: Render forecast chart + table
+```
+
+## Deployment Architecture
+
+```mermaid
+graph LR
+    subgraph GitHub ["GitHub Repository"]
+        CODE[Source Code + Models]
+    end
+
+    subgraph Vercel ["Vercel (Frontend)"]
+        BUILD[npm run build]
+        STATIC[Static Site<br/>build-alpha-steel.vercel.app]
+    end
+
+    subgraph Render ["Render (Backend)"]
+        DOCKER[Docker Build]
+        UVICORN[uvicorn + FastAPI<br/>stock-forecaster-api-wtfs.onrender.com]
+    end
+
+    CODE -->|git push| BUILD
+    CODE -->|git push| DOCKER
+    BUILD --> STATIC
+    DOCKER --> UVICORN
+    STATIC -->|REACT_APP_API_URL| UVICORN
+
+    style GitHub fill:#1e293b,stroke:#e2e8f0,color:#e2e8f0
+    style Vercel fill:#1e293b,stroke:#00f0ff,color:#e2e8f0
+    style Render fill:#1e293b,stroke:#a855f7,color:#e2e8f0
+```
+
+---
+
 ## Supported Tickers (Pre-Trained)
 
 AAPL, TSLA, MSFT, GOOGL, AMZN
@@ -233,15 +394,6 @@ App runs at `http://localhost:3000` and connects to the API at `http://localhost
 ---
 
 ## Deployment Guide
-
-### Architecture
-
-```
-[Vercel - Static Site]          [Render - Docker Web Service]
-   Frontend (React)       →→→      Backend (FastAPI + ML Models)
-   build-alpha-steel               stock-forecaster-api-wtfs
-   .vercel.app                     .onrender.com
-```
 
 ### Deploy Backend to Render
 
