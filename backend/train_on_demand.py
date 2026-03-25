@@ -105,8 +105,9 @@ def download_data(ticker):
     df = df.set_index('Date')
     df = df.sort_index()
 
-    if len(df) < 200:
-        raise ValueError(f"Not enough data for {ticker}. Need at least 200 days, got {len(df)}.")
+    min_days = WINDOW_SIZE + 30  # need at least window size + some data for train/test split
+    if len(df) < min_days:
+        raise ValueError(f"Not enough data for {ticker}. Need at least {min_days} days, got {len(df)}.")
 
     df.to_csv(csv_path)
     print(f"  Saved {ticker}.csv - {len(df)} rows")
@@ -121,8 +122,9 @@ def prepare_data(ticker):
     df = pd.read_csv(csv_path, index_col='Date', parse_dates=True)
     prices = df[['Close']].values
 
-    if len(prices) < 200:
-        raise ValueError(f"Not enough data for {ticker}. Need at least 200 days, got {len(prices)}.")
+    min_days = WINDOW_SIZE + 30
+    if len(prices) < min_days:
+        raise ValueError(f"Not enough data for {ticker}. Need at least {min_days} days, got {len(prices)}.")
 
     # fit scaler on training portion only (70%)
     train_cutoff = int(len(prices) * 0.70)
