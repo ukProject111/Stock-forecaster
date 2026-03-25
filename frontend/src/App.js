@@ -95,6 +95,18 @@ function App() {
               // refresh trained list
               const tickerRes = await axios.get(`${API_URL}/tickers`);
               setTrainedTickers(tickerRes.data.trained || []);
+              // auto-run ML analysis immediately after training (before server can restart)
+              try {
+                const [histRes, predRes, metRes] = await Promise.all([
+                  axios.get(`${API_URL}/history?ticker=${selectedTicker}&days=90`),
+                  axios.get(`${API_URL}/predict?ticker=${selectedTicker}`),
+                  axios.get(`${API_URL}/metrics?ticker=${selectedTicker}`)
+                ]);
+                setHistory(histRes.data.history);
+                setPrediction(predRes.data);
+                setMetrics(metRes.data);
+                setActiveTab('predict');
+              } catch (e) { /* prediction will be available via Run ML Analysis button */ }
             } else if (msg.type === 'error') {
               setError(msg.detail);
               setTrainStatus('');
@@ -131,9 +143,16 @@ function App() {
       setMetrics(metRes.data);
     } catch (err) {
       if (err.response && err.response.data && err.response.data.detail) {
-        setError(err.response.data.detail);
+        const detail = err.response.data.detail;
+        if (detail.includes('No trained models') || detail.includes('Train it first')) {
+          setError(`Models for ${selectedTicker} have expired (server restarted). Please click "Train ML Models" to retrain.`);
+          // remove from trained list since models are gone
+          setTrainedTickers(prev => prev.filter(t => t !== selectedTicker));
+        } else {
+          setError(detail);
+        }
       } else {
-        setError('Prediction failed. Check if the backend is running.');
+        setError('Prediction failed. Backend may be starting up — try again in 30 seconds.');
       }
     } finally {
       setLoading(false);
