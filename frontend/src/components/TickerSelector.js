@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -15,9 +15,10 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
   const inputRef = useRef(null);
   const dropdownRef = useRef(null);
   const debounceRef = useRef(null);
+  const lastSearchQuery = useRef('');
 
   const nameMap = names || {};
-  const trainedSet = new Set(trainedTickers || []);
+  const trainedSet = useMemo(() => new Set(trainedTickers || []), [trainedTickers]);
 
   // build initial results from local list when no query
   const getLocalDefaults = useCallback(() => {
@@ -38,6 +39,10 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
       setSearching(false);
       return;
     }
+
+    // skip if we already searched this exact query
+    if (q === lastSearchQuery.current) return;
+    lastSearchQuery.current = q;
 
     setSearching(true);
     try {
@@ -63,12 +68,12 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
     }
   }, [tickers, nameMap, trainedSet, getLocalDefaults]);
 
-  // debounced search on query change
+  // debounced search only when query text actually changes
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => searchTickers(query), 250);
+    debounceRef.current = setTimeout(() => searchTickers(query), 300);
     return () => clearTimeout(debounceRef.current);
-  }, [query, searchTickers]);
+  }, [query]); // only depend on query, not searchTickers
 
   // close dropdown when clicking outside
   useEffect(() => {
@@ -82,10 +87,12 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // sync selected ticker back to input
+  // sync selected ticker back to input (only when parent changes selection)
+  const prevSelected = useRef(selected);
   useEffect(() => {
-    if (selected && selected !== query) {
-      setQuery(selected);
+    if (selected !== prevSelected.current) {
+      prevSelected.current = selected;
+      setQuery(selected || '');
     }
   }, [selected]);
 
@@ -176,7 +183,7 @@ function TickerSelector({ tickers, trainedTickers, names, selected, onChange }) 
             return (
               <div
                 key={ticker}
-                onClick={() => handleSelect(ticker)}
+                onMouseDown={(e) => { e.preventDefault(); handleSelect(ticker); }}
                 style={{
                   padding: '8px 12px',
                   cursor: 'pointer',
