@@ -58,51 +58,16 @@ def download_data(ticker):
 
     print(f"  Downloading data for {ticker}...")
 
-    import requests
-    from datetime import datetime
+    t = yf.Ticker(ticker)
+    df = t.history(period='max', interval='1d', prepost=False)
 
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-    params = {'range': 'max', 'interval': '1d', 'includePrePost': 'false'}
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-
-    resp = requests.get(url, params=params, headers=headers, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-
-    result = data.get('chart', {}).get('result')
-    if not result:
+    if df is None or df.empty:
         raise ValueError(f"No data available for ticker '{ticker}'. Check if it's a valid symbol.")
 
-    chart = result[0]
-    timestamps = chart.get('timestamp', [])
-    quote = chart.get('indicators', {}).get('quote', [{}])[0]
-
-    opens = quote.get('open', [])
-    highs = quote.get('high', [])
-    lows = quote.get('low', [])
-    closes = quote.get('close', [])
-    volumes = quote.get('volume', [])
-
-    if not timestamps or not closes:
-        raise ValueError(f"No data available for ticker '{ticker}'. Check if it's a valid symbol.")
-
-    rows = []
-    for i, ts in enumerate(timestamps):
-        if closes[i] is None:
-            continue
-        dt = datetime.utcfromtimestamp(ts)
-        rows.append({
-            'Date': dt.strftime('%Y-%m-%d'),
-            'Open': opens[i] or 0,
-            'High': highs[i] or 0,
-            'Low': lows[i] or 0,
-            'Close': closes[i],
-            'Volume': volumes[i] or 0,
-        })
-
-    df = pd.DataFrame(rows)
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.set_index('Date')
+    # yfinance returns columns like Open, High, Low, Close, Volume
+    df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+    df.index.name = 'Date'
+    df = df.dropna(subset=['Close'])
     df = df.sort_index()
 
     min_days = WINDOW_SIZE + 30  # need at least window size + some data for train/test split

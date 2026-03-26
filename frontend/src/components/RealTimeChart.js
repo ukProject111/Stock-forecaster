@@ -41,27 +41,34 @@ function RealTimeChart({ ticker }) {
     { value: '5y', label: '5Y', int: '1d' },
   ];
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (retries = 2) => {
     if (!ticker) return;
     setLoading(true);
     setError('');
 
-    try {
-      const res = await fetch(
-        `${API_URL}/realtime?ticker=${ticker}&period=${period}&interval=${interval}`
-      );
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Failed to fetch data');
+    for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      try {
+        const res = await fetch(
+          `${API_URL}/realtime?ticker=${ticker}&period=${period}&interval=${interval}`
+        );
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'Failed to fetch data');
+        }
+        const json = await res.json();
+        setData(json);
+        setLoading(false);
+        return;
+      } catch (err) {
+        if (attempt <= retries) {
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          setError(err.message || 'Failed to fetch data. Backend may be starting up.');
+          setData(null);
+        }
       }
-      const json = await res.json();
-      setData(json);
-    } catch (err) {
-      setError(err.message);
-      setData(null);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, [ticker, period, interval]);
 
   // fetch on mount and when ticker/period changes

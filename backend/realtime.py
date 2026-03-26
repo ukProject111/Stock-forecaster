@@ -1,14 +1,14 @@
 """
 realtime.py
 Real-time stock data fetching and NASDAQ ticker listing.
-Uses Yahoo Finance chart API directly via requests for reliable Docker support.
+Uses yfinance library for reliable Yahoo Finance data access.
 
 Mehmet Tanil Kaplan - T0429362
 """
 
-import requests
 import os
 import json
+import yfinance as yf
 from datetime import datetime, timedelta
 
 # cache the nasdaq list in memory after first load
@@ -197,52 +197,35 @@ _PERIOD_MAP = {
 
 
 def _fetch_yahoo_chart(ticker, period='5d'):
-    """Fetch price data directly from Yahoo Finance chart API."""
+    """Fetch price data using yfinance library (handles Yahoo auth automatically)."""
     yf_range, yf_interval = _PERIOD_MAP.get(period, ('5d', '15m'))
 
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-    params = {
-        'range': yf_range,
-        'interval': yf_interval,
-        'includePrePost': 'false',
-    }
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+    try:
+        t = yf.Ticker(ticker)
+        df = t.history(period=yf_range, interval=yf_interval, prepost=False)
 
-    resp = requests.get(url, params=params, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
+        if df is None or df.empty:
+            return None
 
-    result = data.get('chart', {}).get('result')
-    if not result:
+        prices = []
+        for idx, row in df.iterrows():
+            close_val = row.get('Close')
+            if close_val is None or (hasattr(close_val, '__float__') and str(close_val) == 'nan'):
+                continue
+            dt = idx.to_pydatetime()
+            prices.append({
+                'datetime': dt.strftime('%Y-%m-%d %H:%M') if yf_interval in ('1m', '5m', '15m', '30m', '1h') else dt.strftime('%Y-%m-%d'),
+                'open': round(float(row.get('Open', 0) or 0), 2),
+                'high': round(float(row.get('High', 0) or 0), 2),
+                'low': round(float(row.get('Low', 0) or 0), 2),
+                'close': round(float(close_val), 2),
+                'volume': int(row.get('Volume', 0) or 0)
+            })
+
+        return prices if prices else None
+    except Exception as e:
+        print(f"yfinance fetch error for {ticker}: {e}")
         return None
-
-    chart = result[0]
-    timestamps = chart.get('timestamp', [])
-    quote = chart.get('indicators', {}).get('quote', [{}])[0]
-
-    opens = quote.get('open', [])
-    highs = quote.get('high', [])
-    lows = quote.get('low', [])
-    closes = quote.get('close', [])
-    volumes = quote.get('volume', [])
-
-    prices = []
-    for i, ts in enumerate(timestamps):
-        if closes[i] is None:
-            continue
-        dt = datetime.utcfromtimestamp(ts)
-        prices.append({
-            'datetime': dt.strftime('%Y-%m-%d'),
-            'open': round(float(opens[i] or 0), 2),
-            'high': round(float(highs[i] or 0), 2),
-            'low': round(float(lows[i] or 0), 2),
-            'close': round(float(closes[i] or 0), 2),
-            'volume': int(volumes[i] or 0)
-        })
-
-    return prices
 
 
 def get_nasdaq_tickers():
@@ -411,7 +394,7 @@ def get_realtime_data(ticker, period='5d', interval='15m'):
 
 
 def get_ticker_info(ticker):
-    """Get basic info about a stock ticker using Yahoo Finance quoteSummary API."""
+    """Get basic info about a stock ticker using yfinance."""
     if ticker in _ticker_info_cache:
         return _ticker_info_cache[ticker]
 
@@ -425,38 +408,28 @@ def get_ticker_info(ticker):
         'exchange': 'N/A',
     }
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-
-    # try Yahoo Finance quoteSummary for detailed info
     try:
-        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
-        params = {'modules': 'assetProfile,price'}
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        summary = data.get('quoteSummary', {}).get('result', [{}])[0]
+        t = yf.Ticker(ticker)
+        info = t.info or {}
 
-        profile = summary.get('assetProfile', {})
-        price = summary.get('price', {})
-
-        if profile.get('sector'):
-            result['sector'] = profile['sector']
-        if profile.get('industry'):
-            result['industry'] = profile['industry']
-        if price.get('exchangeName'):
-            result['exchange'] = price['exchangeName']
-        if price.get('currency'):
-            result['currency'] = price['currency']
-        if price.get('marketCap', {}).get('raw'):
-            result['market_cap'] = price['marketCap']['raw']
-        if price.get('regularMarketPrice', {}).get('raw'):
-            result['current_price'] = round(float(price['regularMarketPrice']['raw']), 2)
-        if price.get('shortName'):
-            result['name'] = price['shortName']
+        if info.get('sector'):
+            result['sector'] = info['sector']
+        if info.get('industry'):
+            result['industry'] = info['industry']
+        if info.get('exchange'):
+            result['exchange'] = info['exchange']
+        if info.get('currency'):
+            result['currency'] = info['currency']
+        if info.get('marketCap'):
+            result['market_cap'] = info['marketCap']
+        if info.get('currentPrice'):
+            result['current_price'] = round(float(info['currentPrice']), 2)
+        elif info.get('regularMarketPrice'):
+            result['current_price'] = round(float(info['regularMarketPrice']), 2)
+        if info.get('shortName'):
+            result['name'] = info['shortName']
     except:
-        # fallback to chart API for at least the current price
+        # fallback to chart data for at least the current price
         try:
             prices = _fetch_yahoo_chart(ticker, '5d')
             if prices:

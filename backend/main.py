@@ -46,6 +46,12 @@ def root():
     }
 
 
+@app.get("/health")
+def health():
+    """Health check endpoint for Render / uptime monitors."""
+    return {"status": "ok"}
+
+
 @app.get("/tickers")
 def list_tickers():
     """Return all supported tickers with company names."""
@@ -117,18 +123,13 @@ def search_tickers(q: str = Query(..., description="Search query for ticker or c
     # if less than 10 results, also search Yahoo Finance for ALL stocks
     if len(results) < 10:
         try:
-            import requests as req
-            yf_url = "https://query1.finance.yahoo.com/v1/finance/search"
-            yf_params = {'q': q, 'quotesCount': 20, 'newsCount': 0}
-            yf_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            yf_resp = req.get(yf_url, params=yf_params, headers=yf_headers, timeout=5)
-            yf_data = yf_resp.json()
-
-            for quote in yf_data.get('quotes', []):
+            import yfinance as yf
+            search_obj = yf.Search(q, max_results=20)
+            quotes = getattr(search_obj, 'quotes', None) or []
+            for quote in quotes:
                 symbol = quote.get('symbol', '')
                 if not symbol or symbol in seen:
                     continue
-                # only include equity stocks from US and UK exchanges
                 exchange = quote.get('exchange', '')
                 qtype = quote.get('quoteType', '')
                 if qtype not in ('EQUITY', 'ETF'):
@@ -389,35 +390,23 @@ def history_monthly(
 ):
     """Fetch monthly historical prices from Yahoo Finance for charting."""
     ticker = ticker.upper().strip()
-    from realtime import _fetch_yahoo_chart, _PERIOD_MAP
-    import requests as req
+    import yfinance as yf_lib
 
     try:
         range_str = f'{years}y' if years <= 10 else '10y'
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        params = {'range': range_str, 'interval': '1mo', 'includePrePost': 'false'}
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        t = yf_lib.Ticker(ticker)
+        df = t.history(period=range_str, interval='1mo', prepost=False)
 
-        resp = req.get(url, params=params, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-
-        result = data.get('chart', {}).get('result')
-        if not result:
+        if df is None or df.empty:
             raise HTTPException(status_code=404, detail=f"No monthly data for {ticker}")
 
-        chart = result[0]
-        timestamps = chart.get('timestamp', [])
-        closes = chart.get('indicators', {}).get('quote', [{}])[0].get('close', [])
-
         points = []
-        for i, ts in enumerate(timestamps):
-            if closes[i] is not None:
-                from datetime import datetime
-                dt = datetime.utcfromtimestamp(ts)
+        for idx, row in df.iterrows():
+            close_val = row.get('Close')
+            if close_val is not None and str(close_val) != 'nan':
                 points.append({
-                    'date': dt.strftime('%Y-%m-%d'),
-                    'price': round(float(closes[i]), 2)
+                    'date': idx.strftime('%Y-%m-%d'),
+                    'price': round(float(close_val), 2)
                 })
 
         return {"ticker": ticker, "count": len(points), "history": points}

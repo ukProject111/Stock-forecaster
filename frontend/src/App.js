@@ -28,18 +28,33 @@ function App() {
   const [activeTab, setActiveTab] = useState('realtime');
   const [trainStatus, setTrainStatus] = useState('');
 
-  // fetch ticker list on load
+  // fetch ticker list on load with retry for Render cold starts
   useEffect(() => {
-    axios.get(`${API_URL}/tickers`)
-      .then(res => {
+    let cancelled = false;
+    const maxRetries = 5;
+    const fetchTickers = async (attempt = 1) => {
+      try {
+        if (attempt > 1) {
+          setError(`Backend is waking up... attempt ${attempt}/${maxRetries}`);
+        }
+        const res = await axios.get(`${API_URL}/tickers`, { timeout: 30000 });
+        if (cancelled) return;
         setAllTickers(res.data.all_tickers || []);
         setTrainedTickers(res.data.trained || []);
         setTickerNames(res.data.names || {});
-      })
-      .catch(err => {
-        console.error('Failed to load tickers:', err);
-        setError('Could not connect to the API. Is the backend running?');
-      });
+        setError('');
+      } catch (err) {
+        if (cancelled) return;
+        console.error(`Failed to load tickers (attempt ${attempt}):`, err);
+        if (attempt < maxRetries) {
+          setTimeout(() => fetchTickers(attempt + 1), 5000);
+        } else {
+          setError('Could not connect to the API after multiple attempts. The backend may be down.');
+        }
+      }
+    };
+    fetchTickers();
+    return () => { cancelled = true; };
   }, []);
 
   const isTrained = trainedTickers.includes(selectedTicker);
